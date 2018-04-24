@@ -27,8 +27,9 @@ int main(int argc, char *argv[])
 
 	for(i=0; i<numClients; i++)
 	{
-		serverListen();
-		portNumbers[i] = atoi(msgBuffer);
+		portNumbers[i] = serverListen();
+		
+		printf("Received from port %d\n", portNumbers[i]);
 	}
 
 	for(i=0; i<numClients; i++)
@@ -40,7 +41,7 @@ int main(int argc, char *argv[])
 		else
 			sprintf(msgBuffer, "%d", portNumbers[i+1]);
 
-		serverInfo.clientAddr.sin_port = htons(portNumbers[0]);
+		serverInfo.clientAddr.sin_port = htons(portNumbers[i]);
 		serverSendMessage();
 	}
 
@@ -79,7 +80,7 @@ void serverSendMessage(void)
 
 }
 
-void serverListen(void)
+int serverListen(void)
 {
 	printf("waiting on port %d\n", serverInfo.port); 
 	bzero(msgBuffer, BUFF_SIZE);
@@ -94,6 +95,6 @@ void serverListen(void)
 		printf("received message: %s", msgBuffer);
 	}
 
-	return;
+	return incomingPort;
 	
 }

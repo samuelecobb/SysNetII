@@ -19,6 +19,6 @@ typedef struct ServerInfo{
 void setupServer(void);
 void waitForConnection(void);
 void serverSendMessage(void);
-void serverListen(void);
+int serverListen(void);
 
 #endif
