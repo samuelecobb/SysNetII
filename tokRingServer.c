@@ -28,8 +28,6 @@ int main(int argc, char *argv[])
 	for(i=0; i<numClients; i++)
 	{
 		portNumbers[i] = serverListen();
-		
-		printf("Received from port %d\n", portNumbers[i]);
 	}
 
 	for(i=0; i<numClients; i++)
@@ -92,7 +90,7 @@ int serverListen(void)
 	if (recvLen > 0) 
 	{ 
 		msgBuffer[recvLen] = 0; 
-		printf("received message: %s", msgBuffer);
+		printf("received message: %s\n\n", msgBuffer);
 	}
 
 	return incomingPort;

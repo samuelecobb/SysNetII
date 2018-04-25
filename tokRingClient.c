@@ -20,6 +20,7 @@
 #include "tokRingClient.h"
 
 #define BUFF_SIZE 2048
+ #define MAX_LINE_SIZE 256
 #define TRUE 0
 #define FALSE 1
 
@@ -27,10 +28,13 @@ NodeInfo			currNode;
 int 				sockFd;
 struct hostent 		*server;
 char				*serverAddr = "127.0.0.1";
+char				*token = "T";
 char				msgBuffer[BUFF_SIZE];
-bool				hasToken, programRun = TRUE;
+bool				hasToken;
+bool				programRun;
 FILE 				*fp;
 pthread_mutex_t 	lock;
+char*				fileName;
 
 
 int main(int argc, char *argv[])
@@ -42,15 +46,18 @@ int main(int argc, char *argv[])
 		exit(0);
 	}
 
-	currNode.serverPort = atoi(argv[1]);
-	currNode.peerPort = atoi(argv[2]);
+	currNode.nextPort = atoi(argv[1]);
+	currNode.myPort = atoi(argv[2]);
 
-	if((currNode.peerPort % 5) == 0)
+	if((currNode.myPort % 5) == 0)
 	{
 		hasToken = TRUE;
-		fp = fopen(argv[3], "w");
-		fclose(fp);
+		printf("**********Winner! Token Received!**********\n");
 	}
+	else hasToken = FALSE;
+	programRun = TRUE;
+	fileName = argv[3];
+	
 
 	joinTokenRing();
 	printMenu();
@@ -61,8 +68,10 @@ int main(int argc, char *argv[])
 	char opBuffer[4];
 	OptionList currOption;
 
+	printf("\nChoose option from menu above: ");
 	fgets(opBuffer, 4, stdin);
 	currOption = translateOption(opBuffer[0]);
+
 
 	while(1)
 	{
@@ -89,7 +98,7 @@ int main(int argc, char *argv[])
 				default:
 					break;
 			}
-
+			printf("\nChoose option from menu above: ");
 			fgets(opBuffer, 4, stdin);
 			currOption = translateOption(opBuffer[0]);
 		}
@@ -110,49 +119,34 @@ void joinTokenRing(void)
 
 	clientSendMessage(); //send initial message
 	clientListen(); //wait for response that includes port of next node
-	currNode.serverPort = atoi(msgBuffer);
-	printf("New server port is now: %d\n\n", currNode.serverPort);
+	currNode.nextPort = atoi(msgBuffer);
+	printf("New server port is now: %d\n\n", currNode.nextPort);
 	connectToServer(); //connect to next node
 
 }
 
 void clientSendMessage(void)
 {
-	if (sendto(sockFd, msgBuffer, strlen(msgBuffer), 0, (struct sockaddr *)&currNode.servAddr, sizeof(currNode.servAddr)) < 0)
+	if (sendto(sockFd, msgBuffer, strlen(msgBuffer), 0, (struct sockaddr *)&currNode.nextAddr, sizeof(currNode.nextAddr)) < 0)
 			{
 				fprintf(stderr, "Sendto failed\n");
 			}
 }
 
-void clientListen(void)
+void clientListen(void) //only for initial communication with server program to setup ring
 {
 	int recvLen, incomingPort;
-	socklen_t addrlen = sizeof(currNode.servAddr);
+	socklen_t addrlen = sizeof(currNode.nextAddr);
 
-	recvLen = recvfrom(sockFd, msgBuffer, BUFF_SIZE, 0, (struct sockaddr *)&currNode.servAddr, &addrlen);
-	incomingPort = ntohs(currNode.servAddr.sin_port);
+	bzero(msgBuffer, BUFF_SIZE);
+	recvLen = recvfrom(sockFd, msgBuffer, BUFF_SIZE, 0, (struct sockaddr *)&currNode.nextAddr, &addrlen);
+	incomingPort = ntohs(currNode.nextAddr.sin_port);
 	printf("received %d bytes from port %d\n", recvLen, incomingPort);
 
 	if (recvLen > 0)
 	{
 		msgBuffer[recvLen] = 0;
-		printf("received message: %s", msgBuffer);
-	}
-}
-
-void serverListen(void)
-{
-	int recvLen, incomingPort;
-	socklen_t addrlen = sizeof(currNode.myAddr);
-
-	recvLen = recvfrom(sockFd, msgBuffer, BUFF_SIZE, 0, (struct sockaddr *)&currNode.myAddr, &addrlen);
-	incomingPort = ntohs(currNode.myAddr.sin_port);
-	printf("received %d bytes from port %d\n", recvLen, incomingPort);
-
-	if (recvLen > 0)
-	{
-		msgBuffer[recvLen] = 0;
-		printf("received message: %s", msgBuffer);
+		printf("received message: %s\n", msgBuffer);
 	}
 }
 
@@ -166,12 +160,12 @@ void connectToServer(void)
 		exit(0);
 	}
 
-	bcopy((char *)server->h_addr, (char *)&currNode.servAddr.sin_addr.s_addr, server->h_length);
+	bcopy((char *)server->h_addr, (char *)&currNode.nextAddr.sin_addr.s_addr, server->h_length);
 
-	memset((char *) &currNode.servAddr, 0, sizeof(currNode.servAddr));
-	currNode.servAddr.sin_family = AF_INET;
-	currNode.servAddr.sin_port = htons(currNode.serverPort);
-	if (inet_aton(serverAddr, &currNode.servAddr.sin_addr)==0) {
+	memset((char *) &currNode.nextAddr, 0, sizeof(currNode.nextAddr));
+	currNode.nextAddr.sin_family = AF_INET;
+	currNode.nextAddr.sin_port = htons(currNode.nextPort);
+	if (inet_aton(serverAddr, &currNode.nextAddr.sin_addr)==0) {
 		fprintf(stderr, "inet_aton() failed\n");
 		exit(0);
 	}
@@ -182,7 +176,7 @@ void setupNode(void)
 	memset((char *)&currNode.myAddr, 0, sizeof(currNode.myAddr));
 	currNode.myAddr.sin_family = AF_INET;
 	currNode.myAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	currNode.myAddr.sin_port = htons(currNode.peerPort);
+	currNode.myAddr.sin_port = htons(currNode.myPort);
 
 	if ((sockFd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	{
@@ -201,24 +195,53 @@ void* tokenHandler(void* param)
 {
 	while(programRun == TRUE)
 	{
+		pthread_mutex_lock(&lock);
 		if(hasToken == TRUE)
 		{
-			bzero(msgBuffer, BUFF_SIZE);
-			msgBuffer[0] = 'T';
-			clientSendMessage();
-			hasToken == FALSE;
+			if(sendMessage(token))
+				hasToken = FALSE;
 		}
-
-		if(hasToken == FALSE)
+		else if(hasToken == FALSE)
 		{
-			bzero(msgBuffer, BUFF_SIZE);
-			serverListen();
-			if(msgBuffer[0] == 'T')
-				hasToken == TRUE;
+			if(receiveMessage())
+				hasToken = TRUE;
+
 		}
+		pthread_mutex_unlock(&lock);
 	}
-	
-	
+
+	return 0;
+}
+
+int sendMessage(char* message)
+{
+	if (sendto(sockFd, message, strlen(message), 0, (struct sockaddr *)&currNode.nextAddr, sizeof(currNode.nextAddr)) < 0)
+	{
+		return 0;		
+	}
+	else
+		return 1;
+}
+
+int receiveMessage()
+{
+	int recvLen, incomingPort;
+	socklen_t addrlen = sizeof(currNode.prevAddr);
+
+	bzero(msgBuffer, BUFF_SIZE);
+	recvLen = recvfrom(sockFd, msgBuffer, BUFF_SIZE, 0, (struct sockaddr *)&currNode.prevAddr, &addrlen);
+	incomingPort = ntohs(currNode.prevAddr.sin_port);
+
+	strtok(msgBuffer, "\n");
+
+	if(msgBuffer[0] == 'T')
+	{
+		return 1;
+	}
+		
+
+	else
+		return 0;
 }
 
 void printMenu(void)
@@ -239,25 +262,20 @@ OptionList translateOption(char input)
 {
 	if(input == 'r')
 	{
-		printf("Recognized option: Read Message\n");
 		return readOp;
 	}
 	if(input == 'w')
 	{
-		printf("Recognized option: Write Message\n");
 		return writeOp;
 	}
 	if(input == 'l')
 	{
-		printf("Recognized option: List messages\n");
 		return listOp;
 	}
 	if(input == 'e')
 	{
-		printf("Recognized option: Exit ring\n");
 		return exitOp;
 	}
-
 	else
 	{
 		printf("Unrecognized option: Please try again\n");
@@ -267,22 +285,71 @@ OptionList translateOption(char input)
 
 void bbWrite(void)
 {
-	printf("writing to bb\n");
+	char fileMsg[BUFF_SIZE];
+	int n = 1;
+	char c;
+
+	fp = fopen(fileName, "a+");
+
+	for (c = getc(fp); c != EOF; c = getc(fp))
+        if (c == '\n') // Increment count if this character is newline
+            n = n + 1;
+
+	printf("What do you want to write?\n");
+	bzero(fileMsg, BUFF_SIZE);
+	fgets(fileMsg, BUFF_SIZE, stdin);
+	strtok(fileMsg, "\n");
+	fprintf(fp, "<message n=%d>", n);
+	fprintf(fp, "<%s>", fileMsg);
+	fprintf(fp, "</message>\n");
+	fclose(fp);
 }
 
 void bbRead(void)
 {
-	printf("reading from bb\n");
+	char messageNum[BUFF_SIZE];
+	char str[MAX_LINE_SIZE];
+	int count = 0;
+	int line;
+
+	printf("Which message do you want to read?\n");
+	fgets(messageNum, BUFF_SIZE, stdin);
+	line = atoi(messageNum);
+
+	fp = fopen(fileName, "a+");
+
+    while (fgets(str, MAX_LINE_SIZE, fp) != NULL) /* read a line */
+    {
+        if (count == (line-1))
+        {
+        	fclose(fp);
+            printf("%s\n", str);
+            return;
+        }
+        else
+        {
+            count++;
+        }
+    }
 }
 
 void bbList(void)
 {
-	printf("listing messages from bb\n");
+	int n = 0;
+	char c;
+
+	fp = fopen(fileName, "a+");
+
+	for (c = getc(fp); c != EOF; c = getc(fp))
+        if (c == '\n') // Increment count if this character is newline
+            n = n + 1;
+    printf("There are currently %d messages on the bulletin board\n", n);
+
 }
 
 void bbExit(void)
 {
 	programRun = FALSE;
-	hasToken = FALSE;
 	printf("exiting token ring\n");
+
 }
